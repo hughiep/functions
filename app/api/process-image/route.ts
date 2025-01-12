@@ -1,11 +1,22 @@
 import { NextResponse } from 'next/server'
-import sharp from 'sharp'
+import { v2 as cloudinary } from 'cloudinary'
+import { UploadApiResponse, UploadApiErrorResponse } from 'cloudinary'
+import { IMAGE_CONFIG, CLOUDINARY_CONFIG } from '@/config/image-processing'
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: CLOUDINARY_CONFIG.cloudName,
+  api_key: CLOUDINARY_CONFIG.apiKey,
+  api_secret: CLOUDINARY_CONFIG.apiSecret,
+  secure: true,
+})
 
 export async function POST(request: Request) {
   try {
     const formData = await request.formData()
     const file = formData.get('image') as File
 
+    // Basic validation
     if (!file) {
       return NextResponse.json(
         { error: 'No image file provided' },
@@ -13,52 +24,49 @@ export async function POST(request: Request) {
       )
     }
 
-    if (!file.type.startsWith('image/')) {
-      return NextResponse.json(
-        { error: 'File must be an image' },
-        { status: 400 },
-      )
-    }
-
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
-    // Process image with Sharp
-    const image = sharp(buffer)
-    const metadata = await image.metadata()
-
-    // Optimize image
-    const processedBuffer = await image
-      .resize(1200, 1200, {
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: 80, progressive: true })
-      .toBuffer()
-
-    // Convert buffer to base64
-    const base64Image = processedBuffer.toString('base64')
-
-    const processedResult = {
-      originalName: file.name,
-      size: processedBuffer.length,
-      type: file.type,
-      dimensions: {
-        width: metadata.width || 0,
-        height: metadata.height || 0,
-      },
-      metadata: {
-        format: metadata.format,
-        space: metadata.space,
-        hasAlpha: metadata.hasAlpha,
-        channels: metadata.channels,
-      },
-      optimizedSize: processedBuffer.length,
-      compressionRatio: buffer.length / processedBuffer.length,
-      processedImage: `data:image/jpeg;base64,${base64Image}`,
+    // Upload directly to Cloudinary
+    let cdnUrl = null
+    if (CLOUDINARY_CONFIG.cloudName) {
+      const uploadResponse = await new Promise<UploadApiResponse>(
+        (resolve, reject) => {
+          cloudinary.uploader
+            .upload_stream(
+              {
+                folder: 'optimized-images',
+                resource_type: 'image',
+                transformation: [
+                  { width: IMAGE_CONFIG.optimization.maxWidth },
+                  { height: IMAGE_CONFIG.optimization.maxHeight },
+                  { crop: 'fit' },
+                  { quality: IMAGE_CONFIG.optimization.quality },
+                  { fetch_format: 'auto' },
+                  { progressive: true },
+                ],
+              },
+              (
+                err: UploadApiErrorResponse | undefined,
+                result: UploadApiResponse | undefined,
+              ) => {
+                if (err) reject(err)
+                else if (!result) reject(new Error('No upload result'))
+                else resolve(result)
+              },
+            )
+            .end(buffer)
+        },
+      )
+      cdnUrl = uploadResponse.secure_url
     }
 
-    return NextResponse.json(processedResult)
+    return NextResponse.json({
+      originalName: file.name,
+      size: buffer.length,
+      type: file.type,
+      optimizedUrl: cdnUrl,
+    })
   } catch (error) {
     console.error('Error processing image:', error)
     return NextResponse.json(
@@ -71,6 +79,6 @@ export async function POST(request: Request) {
 export const config = {
   api: {
     bodyParser: false,
-    responseLimit: '8mb',
+    responseLimit: '10mb',
   },
 }

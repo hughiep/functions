@@ -54,6 +54,7 @@ interface ProcessedImage {
   optimizedSize: number
   compressionRatio: number
   processedImage: string
+  cdnUrl?: string
 }
 
 interface ImageItem {
@@ -168,6 +169,27 @@ export default function Import() {
     }
   }, [images])
 
+  const downloadImage = async (image: ImageItem) => {
+    if (!image.processedData) return
+
+    try {
+      const url =
+        image.processedData.cdnUrl || image.processedData.processedImage
+      const response = await fetch(url)
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `compressed-${image.processedData.originalName}`
+      link.click()
+
+      URL.revokeObjectURL(objectUrl)
+    } catch (error) {
+      console.error('Error downloading image:', error)
+    }
+  }
+
   return (
     <div className="container">
       {isProcessing && (
@@ -199,23 +221,13 @@ export default function Import() {
               )}
               {image.status === 'complete' && image.processedData && (
                 <>
-                  <p className="filename">{image.file.name}</p>
-                  <p className="metadata">
-                    {image.processedData.dimensions.width} x{' '}
-                    {image.processedData.dimensions.height}px
-                  </p>
-                  <p className="metadata">
-                    Compressed:{' '}
-                    {Math.round(image.processedData.compressionRatio * 100)}%
-                  </p>
+                  <img
+                    src={image.processedData.cdnUrl || image.preview}
+                    alt={image.file.name}
+                    className="preview-image"
+                  />
                   <button
-                    onClick={() => {
-                      if (!image.processedData) return
-                      const link = document.createElement('a')
-                      link.href = image.processedData.processedImage
-                      link.download = `compressed-${image.processedData.originalName}`
-                      link.click()
-                    }}
+                    onClick={() => downloadImage(image)}
                     className="download-button"
                   >
                     Download
